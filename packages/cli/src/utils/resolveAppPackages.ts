@@ -481,14 +481,13 @@ const splitNameVersion = function (str: string) {
   };
 };
 
-const getDependencies = (dependencies: Record<string, string>, packagePath: string) => {
-  if (fs.existsSync(packagePath)) return;
+const getDependencies = (packagePath: string) => {
+  if (!fs.existsSync(packagePath)) {
+    const { name: moduleName, version } = splitNameVersion(packagePath);
 
-  const { name: moduleName, version } = splitNameVersion(packagePath);
-
-  if (!moduleName) return;
-
-  dependencies[moduleName] = version;
+    return [moduleName, version];
+  }
+  return [];
 };
 
 const setPackages = (packages: ModuleMainFilePath, app: App, packagePath: string, cwd: string, key?: string) => {
@@ -597,38 +596,29 @@ const setPackages = (packages: ModuleMainFilePath, app: App, packagePath: string
   }
 };
 
-const flattenPackagesConfig = (packages: (string | Record<string, string>)[]) => {
-  const packagesConfig: ([string] | [string, string])[] = [];
-  packages.forEach((item) => {
-    if (typeof item === 'object') {
-      for (const [key, packagePath] of Object.entries(item)) {
-        const index = packagesConfig.findIndex(([, k]) => {
-          return k === key;
-        });
-        if (index > -1) {
-          packagesConfig[index] = [packagePath, key];
-        } else {
-          packagesConfig.push([packagePath, key]);
-        }
-      }
-    } else if (typeof item === 'string') {
-      if (packagesConfig.find(([k]) => k === item)) {
-        return;
-      }
-      packagesConfig.push([item]);
-    }
-  });
-  return packagesConfig;
-};
-
 export const resolveAppPackages = (app: App): ModuleMainFilePath => {
   const dependencies: Record<string, string> = {};
 
   const { packages = [], npmConfig = {}, source } = app.options;
 
-  const packagePaths = flattenPackagesConfig(packages);
+  // 将 packages 统一展开为 [packagePath, key?] 的形式
+  const resolvedPackages: [string, string?][] = [];
+  for (const item of packages) {
+    if (typeof item === 'string') {
+      resolvedPackages.push([item]);
+    } else if (typeof item === 'object') {
+      for (const [key, packagePath] of Object.entries(item)) {
+        resolvedPackages.push([packagePath, key]);
+      }
+    }
+  }
 
-  packagePaths.forEach(([packagePath]) => getDependencies(dependencies, packagePath));
+  for (const [packagePath] of resolvedPackages) {
+    const [moduleName, version] = getDependencies(packagePath);
+    if (moduleName && version) {
+      dependencies[moduleName] = version;
+    }
+  }
 
   if (npmConfig.autoInstall && Object.keys(dependencies).length) {
     if (!npmConfig.keepPackageJsonClean) {
@@ -659,7 +649,9 @@ export const resolveAppPackages = (app: App): ModuleMainFilePath => {
     dsValueMap: {},
   };
 
-  packagePaths.forEach(([packagePath, key]) => setPackages(packagesMap, app, packagePath, source, key));
+  for (const [packagePath, key] of resolvedPackages) {
+    setPackages(packagesMap, app, packagePath, source, key);
+  }
 
   return packagesMap;
 };
